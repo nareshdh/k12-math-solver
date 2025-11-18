@@ -126,3 +126,206 @@
   </div>
 
 </div>
+
+
+
+
+
+
+
+
+  // ---------- Analytics logic ----------
+
+  const algoListEl        = document.getElementById("analytics-algo-list");
+  const selectedAlgoEl    = document.getElementById("analytics-selected-algo");
+  const loadParamsBtn     = document.getElementById("analytics-load-params-btn");
+
+  const pgroupListEl      = document.getElementById("analytics-pgroup-list");
+  const pnameListEl       = document.getElementById("analytics-pname-list");
+  const vehicleListEl     = document.getElementById("analytics-vehicle-list");
+  const psnListEl         = document.getElementById("analytics-psn-list");
+
+  const inputVehicle      = document.getElementById("analytics-input-vehicle");
+  const inputPsn          = document.getElementById("analytics-input-psn");
+  const inputPname        = document.getElementById("analytics-input-pname");
+
+  const analyticsPlotBtn  = document.getElementById("analytics-plot-btn");
+  const analyticsStatusEl = document.getElementById("analytics-status");
+  const analyticsPlotDiv  = document.getElementById("analytics-plot");
+
+  let analyticsSelectedAlgo = null;
+
+  // --- Drag & drop helpers ---
+  function makeDropTarget(input) {
+    if (!input) return;
+    input.addEventListener("dragover", (e) => {
+      e.preventDefault();
+    });
+    input.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const value = e.dataTransfer.getData("text/plain");
+      if (value) {
+        input.value = value;
+      }
+    });
+  }
+
+  makeDropTarget(inputVehicle);
+  makeDropTarget(inputPsn);
+  makeDropTarget(inputPname);
+
+  function makeToken(value, kind) {
+    const span = document.createElement("span");
+    span.className = "analytics-token";
+    span.textContent = value;
+    span.setAttribute("draggable", "true");
+
+    span.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", value);
+    });
+
+    span.addEventListener("click", () => {
+      if (kind === "algo") {
+        analyticsSelectedAlgo = value;
+        if (selectedAlgoEl) selectedAlgoEl.textContent = value;
+        // highlight selection
+        document.querySelectorAll("#analytics-algo-list .analytics-token").forEach(tok => {
+          tok.classList.remove("bg-primary", "text-white");
+        });
+        span.classList.add("bg-primary", "text-white");
+      } else if (kind === "pname" && inputPname) {
+        inputPname.value = value;
+      } else if (kind === "vehicle" && inputVehicle) {
+        inputVehicle.value = value;
+      } else if (kind === "psn" && inputPsn) {
+        inputPsn.value = value;
+      }
+    });
+
+    return span;
+  }
+
+  function fillContainer(container, arr, kind) {
+    container.textContent = "";
+    if (!arr || !arr.length) {
+      container.textContent = "(no values)";
+      return;
+    }
+    arr.forEach(v => {
+      const tok = makeToken(v, kind);
+      container.appendChild(tok);
+    });
+  }
+
+  // --- Step 1: load list of available algorithms (Row 1) ---
+  async function loadAlgorithms() {
+    if (!algoListEl) return;
+    try {
+      const res = await fetch("/api/analytics/algos");
+      const data = await res.json();
+      if (data.status !== "ok") {
+        algoListEl.textContent = data.message || "Error loading algorithms";
+        return;
+      }
+      fillContainer(algoListEl, data.algos || [], "algo");
+    } catch (e) {
+      algoListEl.textContent = "Network error loading algorithms: " + e;
+    }
+  }
+
+  // --- Step 2: when user clicks Submit in Row 1, load params for selected algo (Row 2) ---
+  loadParamsBtn?.addEventListener("click", async () => {
+    if (!analyticsSelectedAlgo) {
+      if (analyticsStatusEl) analyticsStatusEl.textContent = " Please select an algorithm first.";
+      return;
+    }
+    if (analyticsStatusEl) analyticsStatusEl.textContent = " Loading parameters for " + analyticsSelectedAlgo + "...";
+    try {
+      const res = await fetch("/api/analytics/params_for_algo", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ algo_name: analyticsSelectedAlgo })
+      });
+      const data = await res.json();
+      if (data.status !== "ok") {
+        analyticsStatusEl.textContent = data.message || "Error loading parameters";
+        return;
+      }
+
+      fillContainer(pgroupListEl,  data.pgroups  || [], "pgroup");
+      fillContainer(pnameListEl,   data.pnames   || [], "pname");
+      fillContainer(vehicleListEl, data.vehicles || [], "vehicle");
+      fillContainer(psnListEl,     data.psns     || [], "psn");
+
+      // Clear previous selections in inputs
+      if (inputVehicle) inputVehicle.value = "";
+      if (inputPsn)     inputPsn.value = "";
+      if (inputPname)   inputPname.value = "";
+
+      analyticsStatusEl.textContent = " Parameters loaded. Drag values into the input boxes, then click Submit.";
+    } catch (e) {
+      analyticsStatusEl.textContent = " Network error loading parameters: " + e;
+    }
+  });
+
+  // --- Step 3: final Submit (Row 6) – fetch data & plot ---
+  analyticsPlotBtn?.addEventListener("click", async () => {
+    if (!analyticsSelectedAlgo) {
+      analyticsStatusEl.textContent = " Please select an algorithm first.";
+      return;
+    }
+
+    const vehicle = inputVehicle?.value.trim();
+    const psn     = inputPsn?.value.trim();
+    const pname   = inputPname?.value.trim();
+
+    if (!vehicle || !psn || !pname) {
+      analyticsStatusEl.textContent = " Please fill vehicle, psn, and pname (drag & drop or type).";
+      return;
+    }
+
+    analyticsStatusEl.textContent = " Loading data...";
+    try {
+      const res = await fetch("/api/analytics/data", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          algo_name: analyticsSelectedAlgo,
+          vehicle,
+          psn,
+          pname
+        })
+      });
+      const data = await res.json();
+      if (data.status !== "ok") {
+        analyticsStatusEl.textContent = data.message || "Error loading data";
+        return;
+      }
+
+      const points = data.points || [];
+      const xVals  = points.map(p => p.date);
+      const yVals  = points.map(p => p.pvalue);
+
+      const trace = {
+        x: xVals,
+        y: yVals,
+        mode: "markers+lines",
+        type: "scatter",
+        name: `${pname} (${analyticsSelectedAlgo}, ${vehicle}, ${psn})`
+      };
+      const layout = {
+        margin: { t: 20, r: 10, b: 50, l: 60 },
+        xaxis: { title: "date" },
+        yaxis: { title: "pvalue" }
+      };
+
+      Plotly.newPlot(analyticsPlotDiv, [trace], layout);
+      analyticsStatusEl.textContent = ` Loaded ${points.length} points.`;
+    } catch (e) {
+      analyticsStatusEl.textContent = " Network error: " + e;
+    }
+  });
+
+  // Initial load of algorithms for Row 1
+  loadAlgorithms();
+
