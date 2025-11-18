@@ -1,0 +1,128 @@
+<!-- ANALYTICS PANE -->
+<div class="tab-pane fade" id="tab-analytics" role="tabpanel" aria-labelledby="tab-analytics-btn">
+
+  <!-- ROW 1: Algorithms + Submit -->
+  <div class="row mt-3 g-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="card-title mb-0">Available Algorithms</h5>
+            <button id="analytics-load-params-btn" class="btn btn-primary btn-sm" type="button">
+              Submit
+            </button>
+          </div>
+          <small class="text-muted d-block mb-2">
+            Click an algorithm to select it, then click Submit to load its parameters.
+          </small>
+          <div id="analytics-algo-list" class="analytics-token-container"></div>
+          <div class="mt-2">
+            <span class="text-muted small">Selected: </span>
+            <span id="analytics-selected-algo" class="fw-semibold"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 2: Parameter blocks (pgroups, pnames, vehicles, psns) -->
+  <div class="row mt-3 g-3">
+    <div class="col-md-3">
+      <div class="card h-100">
+        <div class="card-body">
+          <h6 class="card-title">pgroup</h6>
+          <div id="analytics-pgroup-list" class="analytics-token-container"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card h-100">
+        <div class="card-body">
+          <h6 class="card-title">pname</h6>
+          <div id="analytics-pname-list" class="analytics-token-container"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card h-100">
+        <div class="card-body">
+          <h6 class="card-title">vehicle</h6>
+          <div id="analytics-vehicle-list" class="analytics-token-container"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card h-100">
+        <div class="card-body">
+          <h6 class="card-title">psn</h6>
+          <div id="analytics-psn-list" class="analytics-token-container"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 3–5: Input boxes for vehicle, psn, pname (drag & drop targets) -->
+
+  <!-- Row 3: vehicle -->
+  <div class="row mt-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <label for="analytics-input-vehicle" class="form-label mb-1">vehicle</label>
+          <input id="analytics-input-vehicle"
+                 type="text"
+                 class="form-control analytics-drop-input"
+                 placeholder="Drag & drop from 'vehicle' block above or type">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 4: psn -->
+  <div class="row mt-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <label for="analytics-input-psn" class="form-label mb-1">psn</label>
+          <input id="analytics-input-psn"
+                 type="text"
+                 class="form-control analytics-drop-input"
+                 placeholder="Drag & drop from 'psn' block above or type">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 5: pname -->
+  <div class="row mt-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <label for="analytics-input-pname" class="form-label mb-1">pname</label>
+          <input id="analytics-input-pname"
+                 type="text"
+                 class="form-control analytics-drop-input"
+                 placeholder="Drag & drop from 'pname' block above or type">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 6: Submit + Plot -->
+  <div class="row mt-3">
+    <div class="col-12">
+      <div class="d-flex align-items-center mb-2">
+        <button id="analytics-plot-btn" class="btn btn-success me-3" type="button">
+          Submit
+        </button>
+        <span id="analytics-status" class="text-muted"></span>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <div id="analytics-plot" style="width: 100%; height: 400px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
