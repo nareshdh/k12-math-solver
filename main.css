@@ -13,15 +13,474 @@
   padding: 4px 8px;
   border-radius: 999px;
   background-color: #e0e7ff;
-  cursor: grab;
+  cursor: pointer;
   user-select: none;
   font-size: 0.8rem;
 }
 
-.analytics-token:active {
-  cursor: grabbing;
+.analytics-token.bg-primary {
+  background-color: #0d6efd !important;
+}
+.analytics-token.text-white {
+  color: #fff !important;
 }
 
-.analytics-drop-input {
-  min-height: 2.5rem;
-}
+
+
+
+
+
+
+from flask import session  # make sure this is already imported
+
+@bp.get("/api/analytics/algos")
+def analytics_algos():
+    """
+    Returns list of available algorithms from DB.
+    Plug your actual 'list algos' SQL here.
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # TODO: replace with your real SQL if different
+        cur.execute("SELECT DISTINCT algo_name FROM algo_output ORDER BY algo_name")
+        algos = [row[0] for row in cur.fetchall()]
+
+        conn.close()
+        return jsonify({"status": "ok", "algos": algos})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+
+
+
+
+@bp.post("/api/analytics/params_for_algo")
+def analytics_params_for_algo():
+    """
+    Given an algorithm name, run the existing SQL that returns a dataframe-like
+    result with columns including at least:
+        pname, vehicle, psn, date, pvalue (and optionally pgroup)
+    Cache those rows in session so analytics_data() can use them later.
+    Also return distinct pname, vehicle, psn lists for dropdowns.
+    """
+    data = request.get_json(silent=True) or {}
+    algo_name = data.get("algo_name")
+    if not algo_name:
+        return jsonify({"status": "error", "message": "algo_name is required"}), 400
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # TODO: replace this with your actual existing query.
+        # It should yield at least: pgroup, pname, pvalue, vehicle, psn, date
+        cur.execute(
+            """
+            SELECT pgroup, pname, pvalue, vehicle, psn, date
+            FROM algo_output
+            WHERE algo_name = ?
+            """,
+            (algo_name,)
+        )
+        rows = cur.fetchall()
+        conn.close()
+
+        # Convert to a "dataframe in session": list of dicts
+        df_rows = []
+        for r in rows:
+            df_rows.append({
+                "pgroup":  r[0],
+                "pname":   r[1],
+                "pvalue":  r[2],
+                "vehicle": r[3],
+                "psn":     r[4],
+                "date":    r[5],
+            })
+
+        # Cache this in server-side session
+        session["analytics_cache"] = {
+            "algo_name": algo_name,
+            "rows": df_rows,
+        }
+
+        # Build distinct lists for dropdowns
+        pnames   = sorted({row["pname"]   for row in df_rows if row["pname"]   is not None})
+        vehicles = sorted({row["vehicle"] for row in df_rows if row["vehicle"] is not None})
+        psns     = sorted({row["psn"]     for row in df_rows if row["psn"]     is not None})
+
+        return jsonify({
+            "status": "ok",
+            "algo_name": algo_name,
+            "pnames": pnames,
+            "vehicles": vehicles,
+            "psns": psns,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+
+
+
+
+@bp.post("/api/analytics/data")
+def analytics_data():
+    """
+    Use the dataframe cached in session by analytics_params_for_algo().
+    Filter by selected vehicle, psn, and one or more pnames.
+    Return traces grouped by pname so frontend can plot multiple series vs time.
+    """
+    data = request.get_json(silent=True) or {}
+    algo_name = data.get("algo_name")
+    vehicle   = data.get("vehicle")
+    psn       = data.get("psn")
+    pnames    = data.get("pnames")
+
+    # Normalize pnames to a list
+    if isinstance(pnames, str):
+        pnames = [pnames]
+    if not isinstance(pnames, list) or not pnames:
+        return jsonify({"status": "error", "message": "At least one pname must be selected"}), 400
+
+    if not algo_name or not vehicle or not psn:
+        return jsonify({
+            "status": "error",
+            "message": "algo_name, vehicle, and psn are required"
+        }), 400
+
+    cache = session.get("analytics_cache")
+    if not cache or cache.get("algo_name") != algo_name:
+        return jsonify({
+            "status": "error",
+            "message": "No cached analytics dataset for this algorithm. Please re-select the algorithm."
+        }), 400
+
+    rows = cache.get("rows", [])
+
+    # Filter the cached "dataframe"
+    filtered = [
+        r for r in rows
+        if r["vehicle"] == vehicle
+        and r["psn"] == psn
+        and r["pname"] in pnames
+    ]
+
+    # Group by pname for multiple traces
+    series_map = {}
+    for r in filtered:
+        pname = r["pname"]
+        series_map.setdefault(pname, []).append({
+            "date":   r["date"],
+            "pvalue": r["pvalue"],
+        })
+
+    # Sort each series by date
+    for pname_key in series_map:
+        series_map[pname_key].sort(key=lambda pt: pt["date"])
+
+    return jsonify({
+        "status": "ok",
+        "algo_name": algo_name,
+        "vehicle": vehicle,
+        "psn": psn,
+        "pnames": pnames,
+        "series": series_map,   # {pname: [ {date, pvalue}, ... ], ...}
+    })
+
+
+
+
+
+
+
+
+
+
+<!-- ANALYTICS PANE -->
+<div class="tab-pane fade" id="tab-analytics" role="tabpanel" aria-labelledby="tab-analytics-btn">
+
+  <!-- ROW 1: Algorithms + Submit -->
+  <div class="row mt-3 g-3">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="card-title mb-0">Available Algorithms</h5>
+            <button id="analytics-load-params-btn" class="btn btn-primary btn-sm" type="button">
+              Submit
+            </button>
+          </div>
+          <small class="text-muted d-block mb-2">
+            Click an algorithm to select it, then click Submit to load its parameter options.
+          </small>
+          <div id="analytics-algo-list" class="analytics-token-container"></div>
+          <div class="mt-2">
+            <span class="text-muted small">Selected: </span>
+            <span id="analytics-selected-algo" class="fw-semibold"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 2: Dropdowns for pname (multi), vehicle, psn -->
+  <div class="row mt-3 g-3">
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <label for="analytics-select-pname" class="form-label">pname (multi-select)</label>
+          <select id="analytics-select-pname"
+                  class="form-select"
+                  multiple
+                  size="6">
+            <!-- options populated via JS -->
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <label for="analytics-select-vehicle" class="form-label">vehicle</label>
+          <select id="analytics-select-vehicle" class="form-select">
+            <!-- options populated via JS -->
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <label for="analytics-select-psn" class="form-label">psn</label>
+          <select id="analytics-select-psn" class="form-select">
+            <!-- options populated via JS -->
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 3: Submit + Plot -->
+  <div class="row mt-3">
+    <div class="col-12">
+      <div class="d-flex align-items-center mb-2">
+        <button id="analytics-plot-btn" class="btn btn-success me-3" type="button">
+          Submit
+        </button>
+        <span id="analytics-status" class="text-muted"></span>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <div id="analytics-plot" style="width: 100%; height: 400px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
+
+
+
+
+  // ---------- Analytics logic (new flow) ----------
+
+  const algoListEl        = document.getElementById("analytics-algo-list");
+  const selectedAlgoEl    = document.getElementById("analytics-selected-algo");
+  const loadParamsBtn     = document.getElementById("analytics-load-params-btn");
+
+  const selectPname       = document.getElementById("analytics-select-pname");
+  const selectVehicle     = document.getElementById("analytics-select-vehicle");
+  const selectPsn         = document.getElementById("analytics-select-psn");
+
+  const analyticsPlotBtn  = document.getElementById("analytics-plot-btn");
+  const analyticsStatusEl = document.getElementById("analytics-status");
+  const analyticsPlotDiv  = document.getElementById("analytics-plot");
+
+  let analyticsSelectedAlgo = null;
+
+  function makeToken(value) {
+    const span = document.createElement("span");
+    span.className = "analytics-token";
+    span.textContent = value;
+
+    span.addEventListener("click", () => {
+      analyticsSelectedAlgo = value;
+      if (selectedAlgoEl) selectedAlgoEl.textContent = value;
+      document.querySelectorAll("#analytics-algo-list .analytics-token").forEach(tok => {
+        tok.classList.remove("bg-primary", "text-white");
+      });
+      span.classList.add("bg-primary", "text-white");
+    });
+
+    return span;
+  }
+
+  function fillTokenContainer(container, values) {
+    container.textContent = "";
+    if (!values || !values.length) {
+      container.textContent = "(no values)";
+      return;
+    }
+    values.forEach(v => {
+      const tok = makeToken(v);
+      container.appendChild(tok);
+    });
+  }
+
+  function fillSelect(selectEl, values, {allowEmptyOption = true, multi = false} = {}) {
+    if (!selectEl) return;
+    selectEl.innerHTML = "";
+    if (allowEmptyOption && !multi) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "-- select --";
+      selectEl.appendChild(opt);
+    }
+    if (!values || !values.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "(no values)";
+      selectEl.appendChild(opt);
+      return;
+    }
+    values.forEach(v => {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      selectEl.appendChild(opt);
+    });
+    if (!multi && selectEl.options.length > 1) {
+      selectEl.selectedIndex = 1; // first real value
+    }
+  }
+
+  // Step 1: load algorithms for row 1
+  async function loadAlgorithms() {
+    if (!algoListEl) return;
+    try {
+      const res = await fetch("/api/analytics/algos");
+      const data = await res.json();
+      if (data.status !== "ok") {
+        algoListEl.textContent = data.message || "Error loading algorithms";
+        return;
+      }
+      fillTokenContainer(algoListEl, data.algos || []);
+    } catch (e) {
+      algoListEl.textContent = "Network error loading algorithms: " + e;
+    }
+  }
+
+  // Step 2: after user selects algo and clicks Submit (row1), load pname/vehicle/psn options
+  loadParamsBtn?.addEventListener("click", async () => {
+    if (!analyticsSelectedAlgo) {
+      if (analyticsStatusEl) analyticsStatusEl.textContent = " Please select an algorithm first.";
+      return;
+    }
+    analyticsStatusEl.textContent = " Loading parameters for " + analyticsSelectedAlgo + "...";
+
+    try {
+      const res = await fetch("/api/analytics/params_for_algo", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ algo_name: analyticsSelectedAlgo })
+      });
+      const data = await res.json();
+      if (data.status !== "ok") {
+        analyticsStatusEl.textContent = data.message || "Error loading parameters";
+        return;
+      }
+
+      // Populate dropdowns (row 2)
+      fillSelect(selectPname,   data.pnames   || [], {allowEmptyOption: false, multi: true});
+      fillSelect(selectVehicle, data.vehicles || [], {allowEmptyOption: true,  multi: false});
+      fillSelect(selectPsn,     data.psns     || [], {allowEmptyOption: true,  multi: false});
+
+      analyticsStatusEl.textContent = " Parameters loaded. Select pname(s), vehicle, psn, then click Submit.";
+    } catch (e) {
+      analyticsStatusEl.textContent = " Network error loading parameters: " + e;
+    }
+  });
+
+  // Step 3: final submit (row3) – send selections to analytics_data & plot
+  analyticsPlotBtn?.addEventListener("click", async () => {
+    if (!analyticsSelectedAlgo) {
+      analyticsStatusEl.textContent = " Please select an algorithm first.";
+      return;
+    }
+    if (!selectPname || !selectVehicle || !selectPsn) {
+      analyticsStatusEl.textContent = " Internal error: dropdowns not found.";
+      return;
+    }
+
+    // Collect selected pnames (multi-select)
+    const selectedPnames = Array.from(selectPname.options)
+      .filter(opt => opt.selected)
+      .map(opt => opt.value)
+      .filter(Boolean);
+
+    const vehicle = selectVehicle.value || "";
+    const psn     = selectPsn.value || "";
+
+    if (!vehicle || !psn || !selectedPnames.length) {
+      analyticsStatusEl.textContent = " Please select at least one pname, and choose vehicle and psn.";
+      return;
+    }
+
+    analyticsStatusEl.textContent = " Loading data...";
+
+    try {
+      const res = await fetch("/api/analytics/data", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          algo_name: analyticsSelectedAlgo,
+          vehicle,
+          psn,
+          pnames: selectedPnames
+        })
+      });
+      const data = await res.json();
+      if (data.status !== "ok") {
+        analyticsStatusEl.textContent = data.message || "Error loading data";
+        return;
+      }
+
+      const series = data.series || {};  // {pname: [ {date, pvalue}, ...], ...}
+      const traces = [];
+
+      Object.keys(series).forEach(pnameKey => {
+        const pts = series[pnameKey] || [];
+        const x = pts.map(p => p.date);
+        const y = pts.map(p => p.pvalue);
+        traces.push({
+          x,
+          y,
+          mode: "markers+lines",
+          type: "scatter",
+          name: pnameKey
+        });
+      });
+
+      const layout = {
+        margin: { t: 20, r: 10, b: 50, l: 60 },
+        xaxis: { title: "date" },
+        yaxis: { title: "pvalue" }
+      };
+
+      Plotly.newPlot(analyticsPlotDiv, traces, layout);
+      analyticsStatusEl.textContent = ` Loaded ${traces.reduce((sum, t) => sum + t.x.length, 0)} points across ${traces.length} pname series.`;
+    } catch (e) {
+      analyticsStatusEl.textContent = " Network error: " + e;
+    }
+  });
+
+  // Initial load of algorithms
+  loadAlgorithms();
+
+
+
